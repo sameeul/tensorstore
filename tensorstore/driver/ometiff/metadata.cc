@@ -80,6 +80,14 @@ TENSORSTORE_DEFINE_JSON_DEFAULT_BINDER(OmeTiffMetadataConstraints,
                                        }))
 
 
+
+Result<std::shared_ptr<const OmeTiffMetadata>> GetNewMetadata(
+    const OmeTiffMetadataConstraints& metadata_constraints, const Schema& schema) {
+  auto metadata = std::make_shared<OmeTiffMetadata>();
+
+  return metadata;
+}
+
 absl::Status SetChunkLayoutFromMetadata(
     DimensionIndex rank, std::optional<span<const Index>> chunk_shape,
     ChunkLayout& chunk_layout) {

@@ -96,6 +96,10 @@ Result<SharedArrayView<const void>> DecodeChunk(const OmeTiffMetadata& metadata,
 Result<absl::Cord> EncodeChunk(span<const Index> chunk_indices,
                                const OmeTiffMetadata& metadata,
                                ArrayView<const void> array);
+
+Result<std::shared_ptr<const OmeTiffMetadata>> GetNewMetadata(
+    const OmeTiffMetadataConstraints& metadata_constraints, const Schema& schema);
+
 }  // namespace internal_ometiff
 }  // namespace tensorstore
 

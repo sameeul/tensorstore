@@ -256,6 +256,20 @@ class OmeTiffDriver::OpenState : public OmeTiffDriver::OpenStateBase {
     return std::make_unique<DataCache>(std::move(initializer),
                                        spec().store.path);
   }
+
+  Result<std::shared_ptr<const void>> Create(
+      const void* existing_metadata) override {
+    if (existing_metadata) {
+      return absl::AlreadyExistsError("");
+    }
+    TENSORSTORE_ASSIGN_OR_RETURN(
+        auto metadata,
+        internal_ometiff::GetNewMetadata(spec().metadata_constraints, spec().schema),
+        tensorstore::MaybeAnnotateStatus(
+            _, "Cannot create using specified \"metadata\" and schema"));
+    return metadata;
+  }
+
   Result<std::size_t> GetComponentIndex(const void* metadata_ptr,
                                         OpenMode open_mode) override {
     const auto& metadata = *static_cast<const OmeTiffMetadata*>(metadata_ptr);
@@ -265,6 +279,11 @@ class OmeTiffDriver::OpenState : public OmeTiffDriver::OpenStateBase {
 
 };
 
+Future<internal::Driver::Handle> OmeTiffDriverSpec::Open(
+    internal::OpenTransactionPtr transaction,
+    ReadWriteMode read_write_mode) const {
+  return OmeTiffDriver::Open(std::move(transaction), this, read_write_mode);
+}
 
 }  // namespace
 }  // namespace internal_ometiff
