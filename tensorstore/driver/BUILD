@@ -19,6 +19,7 @@ DRIVERS = [
     "stack",
     "virtual_chunked",
     "zarr",
+    "ometiff",
 ]
 
 DOCTEST_SOURCES = glob([
