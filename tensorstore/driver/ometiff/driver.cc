@@ -82,13 +82,15 @@ class OmeTiffDriverSpec
 // we need OMETiff Metadata 
 Result<std::shared_ptr<const OmeTiffMetadata>> ParseEncodedMetadata(
     std::string_view encoded_value) {
-  nlohmann::json raw_data = nlohmann::json::parse(encoded_value, nullptr,
-                                                  /*allow_exceptions=*/false);
-  if (raw_data.is_discarded()) {
-    return absl::FailedPreconditionError("Invalid JSON");
-  }
-  TENSORSTORE_ASSIGN_OR_RETURN(auto metadata,
-                               OmeTiffMetadata::FromJson(std::move(raw_data)));
+
+  // nlohmann::json raw_data = nlohmann::json::parse(encoded_value, nullptr,
+  //                                                 /*allow_exceptions=*/false);
+  // if (raw_data.is_discarded()) {
+  //   return absl::FailedPreconditionError("Invalid JSON");
+  // }
+  // TENSORSTORE_ASSIGN_OR_RETURN(auto metadata,
+  //                              OmeTiffMetadata::FromJson(std::move(raw_data)));
+  auto metadata = OmeTiffMetadata{};
   return std::make_shared<OmeTiffMetadata>(std::move(metadata));
 }
 
@@ -235,7 +237,10 @@ class OmeTiffDriver::OpenState : public OmeTiffDriver::OpenStateBase {
   std::string GetPrefixForDeleteExisting() override {
     return spec().store.path;
   }
-  std::string GetMetadataCacheEntryKey() override { return spec().store.path; }
+  std::string GetMetadataCacheEntryKey() override { 
+    std::string tmp = spec().store.path;
+    tmp.pop_back(); 
+    return tmp; }
   
   std::unique_ptr<internal_kvs_backed_chunk_driver::MetadataCache>
   GetMetadataCache(MetadataCache::Initializer initializer) override {
