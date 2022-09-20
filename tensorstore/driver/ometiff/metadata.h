@@ -25,6 +25,7 @@ class OmeTiffMetadata {
         std::vector<Index> chunk_shape; // tile size, may be?
         DataType dtype;
         StridedLayout<> chunk_layout;
+        bool tiled;
         TENSORSTORE_DECLARE_JSON_DEFAULT_BINDER(OmeTiffMetadata,
                                                 internal_json_binding::NoOptions,
                                                 tensorstore::IncludeDefaults)
@@ -100,6 +101,10 @@ Result<absl::Cord> EncodeChunk(span<const Index> chunk_indices,
 Result<std::shared_ptr<const OmeTiffMetadata>> GetNewMetadata(
     const OmeTiffMetadataConstraints& metadata_constraints, const Schema& schema);
 
+/// Validates that `dtype` is supported by OMETiff.
+///
+/// \dchecks `dtype.valid()`
+absl::Status ValidateDataType(DataType dtype);
 }  // namespace internal_ometiff
 }  // namespace tensorstore
 

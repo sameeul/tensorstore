@@ -86,3 +86,21 @@ tensorstore_cc_library(
     ],
     alwayslink = 1,
 )
+
+tensorstore_cc_test(
+    name = "metadata_test",
+    size = "small",
+    srcs = ["metadata_test.cc"],
+    deps = [
+        ":metadata",
+        "//tensorstore:array",
+        "//tensorstore:codec_spec",
+        "//tensorstore/internal:json_gtest",
+        "//tensorstore/internal/json_binding:gtest",
+        "//tensorstore/util:result",
+        "//tensorstore/util:span",
+        "//tensorstore/util:status",
+        "//tensorstore/util:status_testutil",
+        "@com_google_googletest//:gtest_main",
+    ],
+)

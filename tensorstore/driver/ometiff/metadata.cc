@@ -2,6 +2,7 @@
 #include "tensorstore/driver/ometiff/metadata.h"
 
 // ToDo - Clean up headers
+#include <iostream>
 #include <optional>
 
 #include "absl/algorithm/container.h"
@@ -27,7 +28,24 @@ using internal::MetadataMismatchError;
 namespace jb = tensorstore::internal_json_binding;
 namespace {
 
+constexpr std::array kSupportedDataTypes{
+    DataTypeId::uint8_t,   DataTypeId::uint16_t, DataTypeId::uint32_t,
+    DataTypeId::uint64_t,  DataTypeId::int8_t,   DataTypeId::int16_t,
+    DataTypeId::int32_t,   DataTypeId::int64_t,  DataTypeId::float32_t,
+    DataTypeId::float64_t,
+};
+
+std::string GetSupportedDataTypes() {
+  return absl::StrJoin(
+      kSupportedDataTypes, ", ", [](std::string* out, DataTypeId id) {
+        absl::StrAppend(out, kDataTypes[static_cast<int>(id)].name());
+      });
+}
+
 absl::Status ValidateMetadata(OmeTiffMetadata& metadata) {
+  InitializeContiguousLayout(c_order, metadata.dtype.size(),
+                             span<const Index>(metadata.chunk_shape),
+                             &metadata.chunk_layout);
   return absl::OkStatus();
 }
 
@@ -49,7 +67,7 @@ constexpr auto MetadataJsonBinder = [](auto maybe_optional) {
             "dataType",
             jb::Projection(&T::dtype, maybe_optional(jb::Validate(
                                           [](const auto& options, auto* obj) {
-                                            return absl::OkStatus();
+                                            return ValidateDataType(*obj);
                                           },
                                           jb::DataTypeJsonBinder))))
 
@@ -182,6 +200,15 @@ Result<ChunkLayout> GetEffectiveChunkLayout(
   return GetEffectiveChunkLayout(
       std::max(metadata_constraints.rank, schema.rank().rank),
       metadata_constraints.chunk_shape, schema);
+}
+
+absl::Status ValidateDataType(DataType dtype) {
+  if (!absl::c_linear_search(kSupportedDataTypes, dtype.id())) {
+    return absl::InvalidArgumentError(
+        StrCat(dtype, " data type is not one of the supported data types: ",
+               GetSupportedDataTypes()));
+  }
+  return absl::OkStatus();
 }
 }  // namespace internal_ometiff
 }  // namespace tensorstore
