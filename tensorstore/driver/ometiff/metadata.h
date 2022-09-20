@@ -98,8 +98,16 @@ Result<absl::Cord> EncodeChunk(span<const Index> chunk_indices,
                                const OmeTiffMetadata& metadata,
                                ArrayView<const void> array);
 
+/// Converts `metadata_constraints` to a full metadata object.
+///
+/// \error `absl::StatusCode::kInvalidArgument` if any required fields are
+///     unspecified.
 Result<std::shared_ptr<const OmeTiffMetadata>> GetNewMetadata(
     const OmeTiffMetadataConstraints& metadata_constraints, const Schema& schema);
+
+/// Validates that `schema` is compatible with `metadata`.
+absl::Status ValidateMetadataSchema(const OmeTiffMetadata& metadata,
+                                    const Schema& schema);
 
 /// Validates that `dtype` is supported by OMETiff.
 ///

@@ -103,7 +103,38 @@ Result<std::shared_ptr<const OmeTiffMetadata>> GetNewMetadata(
     const OmeTiffMetadataConstraints& metadata_constraints, const Schema& schema) {
   auto metadata = std::make_shared<OmeTiffMetadata>();
 
+  // Set domain
+  TENSORSTORE_ASSIGN_OR_RETURN(
+      auto domain, GetEffectiveDomain(metadata_constraints, schema));
+  if (!domain.valid() || !IsFinite(domain.box())) {
+    return absl::InvalidArgumentError("domain must be specified");
+  }
+  const DimensionIndex rank = metadata->rank = domain.rank();
+  metadata->shape.assign(domain.shape().begin(), domain.shape().end());
+
+  // Set dtype
+  auto dtype = schema.dtype();
+  if (!dtype.valid()) {
+    return absl::InvalidArgumentError("dtype must be specified");
+  }
+  TENSORSTORE_RETURN_IF_ERROR(ValidateDataType(dtype));
+  metadata->dtype = dtype;
+
+  // Set chunk shape
+  TENSORSTORE_ASSIGN_OR_RETURN(
+      auto chunk_layout, GetEffectiveChunkLayout(metadata_constraints, schema));
+  metadata->chunk_shape.resize(rank);
+  {
+    Index chunk_origin[kMaxRank];
+    TENSORSTORE_RETURN_IF_ERROR(tensorstore::internal::ChooseReadWriteChunkGrid(
+        chunk_layout, domain.box(),
+        MutableBoxView<>(rank, chunk_origin, metadata->chunk_shape.data())));
+  }
+
+  TENSORSTORE_RETURN_IF_ERROR(ValidateMetadata(*metadata));
+  TENSORSTORE_RETURN_IF_ERROR(ValidateMetadataSchema(*metadata, schema));
   return metadata;
+
 }
 
 absl::Status SetChunkLayoutFromMetadata(
@@ -201,6 +232,43 @@ Result<ChunkLayout> GetEffectiveChunkLayout(
       std::max(metadata_constraints.rank, schema.rank().rank),
       metadata_constraints.chunk_shape, schema);
 }
+
+absl::Status ValidateMetadataSchema(const OmeTiffMetadata& metadata,
+                                    const Schema& schema) {
+  if (!RankConstraint::EqualOrUnspecified(metadata.rank, schema.rank())) {
+    return absl::FailedPreconditionError(tensorstore::StrCat(
+        "Rank specified by schema (", schema.rank(),
+        ") does not match rank specified by metadata (", metadata.rank, ")"));
+  }
+
+  if (schema.domain().valid()) {
+    TENSORSTORE_RETURN_IF_ERROR(GetEffectiveDomain(
+        metadata.rank, metadata.shape, schema));
+  }
+
+  if (auto dtype = schema.dtype();
+      !IsPossiblySameDataType(metadata.dtype, dtype)) {
+    return absl::FailedPreconditionError(
+        tensorstore::StrCat("dtype from metadata (", metadata.dtype,
+                            ") does not match dtype in schema (", dtype, ")"));
+  }
+
+  if (schema.chunk_layout().rank() != dynamic_rank) {
+    TENSORSTORE_ASSIGN_OR_RETURN(
+        auto chunk_layout,
+        GetEffectiveChunkLayout(metadata.rank, metadata.chunk_shape, schema));
+    if (chunk_layout.codec_chunk_shape().hard_constraint) {
+      return absl::InvalidArgumentError("codec_chunk_shape not supported");
+    }
+  }
+
+  if (schema.fill_value().valid()) {
+    return absl::InvalidArgumentError("fill_value not supported by OmeTiff format");
+  }
+
+  return absl::OkStatus();
+}
+
 
 absl::Status ValidateDataType(DataType dtype) {
   if (!absl::c_linear_search(kSupportedDataTypes, dtype.id())) {
