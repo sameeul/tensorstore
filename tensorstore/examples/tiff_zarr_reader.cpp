@@ -46,13 +46,59 @@ using ::tensorstore::Context;
 using ::tensorstore::StrCat;
 using tensorstore::Index;
 
+template <typename Array>
+void PrintCSVArray(Array&& data) {
+  if (data.rank() == 0) {
+    std::cout << data << std::endl;
+    return;
+  }
+
+  // Iterate over the shape of the data array, which gives us one
+  // reference for every element.
+  //
+  // The builtin streaming operator outputs data in C++ array initialization
+  // syntax: {{0, 0}, {1, 0}}, but this routine prefers CSV-formatted output.
+  //
+  // The output of this function is equivalent to:
+  //
+  // for (int x = 0; x < data.shape()[0]; x++)
+  //  for (int y = 0; y < data.shape()[1]; y++) {
+  //     ...
+  //       std::cout << data[x][y][...] << "\t";
+  //  }
+  //
+  const auto max = data.shape()[data.rank() - 1] - 1;
+  auto element_rep = data.dtype();
+
+  // FIXME: We can't use operator() to get a value reference since that doesn't
+  // work for tensorstore::ArrayView<const void, N>. However in the case of
+  // printing, rank-0 arrays have been overloaded to print correctly, and so we
+  // can do this:
+  std::string s;
+  size_t sum = 0;
+  tensorstore::IterateOverIndexRange(  //
+      data.shape(), [&](tensorstore::span<const Index> idx) {
+        
+        element_rep->append_to_string(&s, data[idx].pointer());
+        if (*idx.rbegin() == max) {
+          //std::cout << s << std::endl;
+          sum += std::stoi(s);
+          s.clear();
+        } else {
+          s.append("\t");
+        }
+      });
+  //std::cout << s << std::endl;
+  std::cout << "sum is " << sum << std::endl;
+}
+
 
 void read_ometiff_data()
 {
   tensorstore::Context context = Context::Default();
   TENSORSTORE_CHECK_OK_AND_ASSIGN(auto store, tensorstore::Open({{"driver", "ometiff"},
                             {"kvstore", {{"driver", "file"},
-                                         {"path", "/mnt/hdd8/axle/data/nyxus_zarr_test/eastman-plate01-intensity/eastman-plate01-intensity/p01_x01_y01_wx2_wy2_c1.ome.tif"}}
+                                         {"path", "/home/ec2-user/data/r001_c001_z000.ome.tif"}}
                             }},
                             context,
                             tensorstore::OpenMode::open,
@@ -62,7 +108,27 @@ void read_ometiff_data()
 
 
  
+  auto array = tensorstore::AllocateArray<tensorstore::uint16_t>({1050, 1050});
+  auto array2 = tensorstore::AllocateArray<tensorstore::uint16_t>({17, 17});
+
+  tensorstore::Read(store | 
+                tensorstore::AllDims().TranslateTo(0) |
+                tensorstore::Dims(0).ClosedInterval(0,1049) |
+                tensorstore::Dims(1).ClosedInterval(0,1049) ,
+                array).value();
+
+  PrintCSVArray(array);
+
+
+  tensorstore::Read(store | 
+                tensorstore::AllDims().TranslateTo(0) |
+                tensorstore::Dims(0).ClosedInterval(1024,1040) |
+                tensorstore::Dims(1).ClosedInterval(1024,1040) ,
+                array2).value();
 }
+
+
+
 
 int main(int argc, char** argv) {
   read_ometiff_data();

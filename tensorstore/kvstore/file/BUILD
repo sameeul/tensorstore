@@ -52,6 +52,9 @@ tensorstore_cc_library(
         "@com_google_absl//absl/time",
     ],
     alwayslink = 1,
+    linkopts = ["/usr/lib64/libtiffxx.so.5",
+            "/usr/lib64/libtiff.so"
+            ]
 )
 
 tensorstore_cc_test(

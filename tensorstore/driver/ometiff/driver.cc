@@ -17,6 +17,10 @@
 #include "tensorstore/util/constant_vector.h"
 #include "tensorstore/util/future.h"
 
+#include <iostream>
+
+#include "tensorstore/driver/ometiff/pugixml.hpp"
+
 namespace tensorstore {
 namespace internal_ometiff {
 
@@ -46,6 +50,9 @@ class OmeTiffDriverSpec
 
   static inline const auto default_json_binder = jb::Sequence(
       jb::Validate([](const auto& options, auto* obj) {
+            if (obj->schema.dtype().valid()) {
+              return ValidateDataType(obj->schema.dtype());
+            }
             return absl::OkStatus();
           },
           internal_kvs_backed_chunk_driver::SpecJsonBinder),
@@ -53,6 +60,10 @@ class OmeTiffDriverSpec
           "metadata",
           jb::Validate( 
               [](const auto& options, auto* obj) {
+                TENSORSTORE_RETURN_IF_ERROR(obj->schema.Set(
+                    obj->metadata_constraints.dtype.value_or(DataType())));
+                TENSORSTORE_RETURN_IF_ERROR(obj->schema.Set(
+                    RankConstraint{obj->metadata_constraints.rank}));
                 return absl::OkStatus();
               },
               jb::Projection<&OmeTiffDriverSpec::metadata_constraints>(
@@ -72,7 +83,6 @@ class OmeTiffDriverSpec
     return GetEffectiveChunkLayout(metadata_constraints, schema);
   }
   
-  Result<CodecSpec> GetCodec() const override { return CodecSpec{}; }
 
   Future<internal::Driver::Handle> Open(
       internal::OpenTransactionPtr transaction,
@@ -88,9 +98,18 @@ Result<std::shared_ptr<const OmeTiffMetadata>> ParseEncodedMetadata(
   // if (raw_data.is_discarded()) {
   //   return absl::FailedPreconditionError("Invalid JSON");
   // }
-  // TENSORSTORE_ASSIGN_OR_RETURN(auto metadata,
-  //                              OmeTiffMetadata::FromJson(std::move(raw_data)));
-  auto metadata = OmeTiffMetadata{};
+
+  // for now, hardcoded metadata, 
+  // in future this will come from "IMAGE_DESCRIPTION" tag
+  pugi::xml_document doc;
+  pugi::xml_parse_result result = doc.load_string(encoded_value);
+  nlohmann::json raw_data {
+      {"dimensions", {42906, 29286}},   
+      {"blockSize", {1024, 1024}},           
+      {"dataType", "uint16"},
+  }; 
+  TENSORSTORE_ASSIGN_OR_RETURN(auto metadata,
+                               OmeTiffMetadata::FromJson(std::move(raw_data)));
   return std::make_shared<OmeTiffMetadata>(std::move(metadata));
 }
 
@@ -104,7 +123,9 @@ class MetadataCache : public internal_kvs_backed_chunk_driver::MetadataCache {
   // Metadata is stored as IMAGE_DESCRIPTION tag inside tiff.
   std::string GetMetadataStorageKey(std::string_view entry_key) override {
     // metadata is in the same file
-    return std::string(entry_key);
+   auto tmp = tensorstore::StrCat(entry_key, "/__TAG__/", kMetadataKey);
+    return tensorstore::StrCat(entry_key, "/__TAG__/", kMetadataKey);
+//    return std::string(entry_key);
   }
   Result<MetadataPtr> DecodeMetadata(std::string_view entry_key,
                                      absl::Cord encoded_metadata) override {
@@ -131,7 +152,45 @@ class DataCache : public internal_kvs_backed_chunk_driver::DataCache {
   absl::Status ValidateMetadataCompatibility(
       const void* existing_metadata_ptr,
       const void* new_metadata_ptr) override {
-    return absl::OkStatus();
+    const auto& existing_metadata =
+        *static_cast<const OmeTiffMetadata*>(existing_metadata_ptr);
+    const auto& new_metadata =
+        *static_cast<const OmeTiffMetadata*>(new_metadata_ptr);
+    auto existing_key = existing_metadata.GetCompatibilityKey();
+    auto new_key = new_metadata.GetCompatibilityKey();
+    if (existing_key == new_key) return absl::OkStatus();
+    return absl::FailedPreconditionError(
+        StrCat("Updated OmeTiff metadata ", new_key,
+               " is incompatible with existing metadata ", existing_key));
+  }
+
+  void GetChunkGridBounds(const void* metadata_ptr, MutableBoxView<> bounds,
+                          DimensionSet& implicit_lower_bounds,
+                          DimensionSet& implicit_upper_bounds) override {
+    const auto& metadata = *static_cast<const OmeTiffMetadata*>(metadata_ptr);
+    assert(bounds.rank() == static_cast<DimensionIndex>(metadata.shape.size()));
+    std::fill(bounds.origin().begin(), bounds.origin().end(), Index(0));
+    std::copy(metadata.shape.begin(), metadata.shape.end(),
+              bounds.shape().begin());
+    implicit_lower_bounds = false;
+    implicit_upper_bounds = true;
+  }
+
+  Result<std::shared_ptr<const void>> GetResizedMetadata(
+      const void* existing_metadata, span<const Index> new_inclusive_min,
+      span<const Index> new_exclusive_max) override {
+    auto new_metadata = std::make_shared<OmeTiffMetadata>(
+        *static_cast<const OmeTiffMetadata*>(existing_metadata));
+    const DimensionIndex rank = new_metadata->shape.size();
+    assert(rank == new_inclusive_min.size());
+    assert(rank == new_exclusive_max.size());
+    for (DimensionIndex i = 0; i < rank; ++i) {
+      assert(ExplicitIndexOr(new_inclusive_min[i], 0) == 0);
+      const Index new_size = new_exclusive_max[i];
+      if (new_size == kImplicit) continue;
+      new_metadata->shape[i] = new_size;
+    }
+    return new_metadata;
   }
 
   static internal::ChunkGridSpecification GetChunkGridSpecification(
@@ -168,24 +227,36 @@ class DataCache : public internal_kvs_backed_chunk_driver::DataCache {
     return absl::Cord();
   }
 
-  void GetChunkGridBounds(const void* metadata_ptr, MutableBoxView<> bounds,
-                          DimensionSet& implicit_lower_bounds,
-                          DimensionSet& implicit_upper_bounds) override {}
-
-  Result<std::shared_ptr<const void>> GetResizedMetadata(
-      const void* existing_metadata, span<const Index> new_inclusive_min,
-      span<const Index> new_exclusive_max) override {
-    auto new_metadata = std::make_shared<OmeTiffMetadata>(
-        *static_cast<const OmeTiffMetadata*>(existing_metadata));
-
-    return new_metadata;
-  }
-
-  std::string GetChunkStorageKey(const void* metadata,
+   std::string GetChunkStorageKey(const void* metadata_ptr,
                                  span<const Index> cell_indices) override {
-    return key_prefix_;
+    // Use "0" for rank 0 as a special case.
+    const auto& metadata = *static_cast<const OmeTiffMetadata*>(metadata_ptr);
+    std::string key =
+         StrCat(key_prefix_, "__TAG__/" );
+    auto& chunk_shape = metadata.chunk_shape;
+//    StrAppend(&key, cell_indices.empty() ? 0 : cell_indices[0]);
+     for (DimensionIndex i = 0; i < cell_indices.size(); ++i) {
+       StrAppend(&key, "_", cell_indices[i]*chunk_shape[i]);
+     }
+    std::cout << "storage key : " << key << std::endl;
+    return key;
   }
 
+  Result<IndexTransform<>> GetExternalToInternalTransform(
+      const void* metadata_ptr, std::size_t component_index) override {
+    assert(component_index == 0);
+    const auto& metadata = *static_cast<const OmeTiffMetadata*>(metadata_ptr);
+
+    const DimensionIndex rank = metadata.shape.size();
+    auto builder = tensorstore::IndexTransformBuilder<>(rank, rank)
+                       .input_shape(metadata.shape);
+                       //.input_labels(axes);
+    builder.implicit_upper_bounds(true);
+    for (DimensionIndex i = 0; i < rank; ++i) {
+      builder.output_single_input_dimension(i, i);
+    }
+    return builder.Finalize();
+  }
   absl::Status GetBoundSpecData(KvsDriverSpec& spec_base,
                                 const void* metadata_ptr,
                                 std::size_t component_index) override {
@@ -256,11 +327,7 @@ class OmeTiffDriver::OpenState : public OmeTiffDriver::OpenStateBase {
   }
 
 
-  std::unique_ptr<internal_kvs_backed_chunk_driver::DataCache> GetDataCache(
-      DataCache::Initializer initializer) override {
-    return std::make_unique<DataCache>(std::move(initializer),
-                                       spec().store.path);
-  }
+
 
   Result<std::shared_ptr<const void>> Create(
       const void* existing_metadata) override {
@@ -275,10 +342,19 @@ class OmeTiffDriver::OpenState : public OmeTiffDriver::OpenStateBase {
     return metadata;
   }
 
+  std::unique_ptr<internal_kvs_backed_chunk_driver::DataCache> GetDataCache(
+      DataCache::Initializer initializer) override {
+    return std::make_unique<DataCache>(std::move(initializer),
+                                       spec().store.path);
+  }
+
   Result<std::size_t> GetComponentIndex(const void* metadata_ptr,
                                         OpenMode open_mode) override {
     const auto& metadata = *static_cast<const OmeTiffMetadata*>(metadata_ptr);
-
+    TENSORSTORE_RETURN_IF_ERROR(
+        ValidateMetadata(metadata, spec().metadata_constraints));
+    TENSORSTORE_RETURN_IF_ERROR(
+        ValidateMetadataSchema(metadata, spec().schema));
     return 0;
   }
 

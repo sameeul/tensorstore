@@ -81,6 +81,10 @@
 ///    `rename` operations are durable).  This step is skipped on MS Windows,
 ///    where `fsync` is not supported for directories.
 
+
+#include <tiffio.h>
+#include <regex>
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -337,17 +341,27 @@ Result<UniqueFileDescriptor> OpenValueFile(const char* path,
 }
 
 /// Implements `FileKeyValueStore::Read`.
+
+// if we can override this in each cache class, that may work
 struct ReadTask {
   std::string full_path;
   kvstore::ReadOptions options;
 
   Result<ReadResult> operator()() const {
     ReadResult read_result;
+    std::string image_metadata;
+    std::string tag = "/__TAG__/";
+    std::string img_tag = "IMAGE_DESCRIPTION"; 
+    std::size_t pos = full_path.rfind(tag);
+    std::string actual_full_path = full_path.substr(0, pos);
+    std::string tag_value = full_path.substr(pos+tag.length());
+
+// need to make sure fd has the correct timestamp for stale check
     read_result.stamp.time = absl::Now();
     std::int64_t size;
     TENSORSTORE_ASSIGN_OR_RETURN(
         auto fd,
-        OpenValueFile(full_path.c_str(), &read_result.stamp.generation, &size));
+        OpenValueFile(actual_full_path.c_str(), &read_result.stamp.generation, &size));
     if (!fd.valid()) {
       read_result.state = ReadResult::kMissing;
       return read_result;
@@ -357,27 +371,72 @@ struct ReadTask {
          read_result.stamp.generation != options.if_equal)) {
       return read_result;
     }
-    TENSORSTORE_ASSIGN_OR_RETURN(auto byte_range,
-                                 options.byte_range.Validate(size));
-    read_result.state = ReadResult::kValue;
-    internal::FlatCordBuilder buffer(byte_range.size());
-    std::size_t offset = 0;
-    while (offset < buffer.size()) {
-      std::ptrdiff_t n = internal_file_util::ReadFromFile(
-          fd.get(), buffer.data() + offset, buffer.size() - offset,
-          byte_range.inclusive_min + offset);
-      if (n > 0) {
-        file_bytes_read.IncrementBy(n);
-        offset += n;
-        continue;
+    // TENSORSTORE_ASSIGN_OR_RETURN(auto byte_range,
+    //                              options.byte_range.Validate(size));
+    // read_result.state = ReadResult::kValue;
+    // internal::FlatCordBuilder buffer(byte_range.size());
+    // std::size_t offset = 0;
+    // while (offset < buffer.size()) {
+    //   std::ptrdiff_t n = internal_file_util::ReadFromFile(
+    //       fd.get(), buffer.data() + offset, buffer.size() - offset,
+    //       byte_range.inclusive_min + offset);
+    //   if (n > 0) {
+    //     file_bytes_read.IncrementBy(n);
+    //     offset += n;
+    //     continue;
+    //   }
+    //   if (n == 0) {
+    //     return absl::UnavailableError(
+    //         StrCat("Length changed while reading: ", full_path));
+    //   }
+    //   return StatusFromErrno("Error reading file: ", full_path);
+    // }
+
+    if (pos != std::string::npos){
+
+      if (tag_value == img_tag){
+        TIFF *tiff_ = TIFFOpen(actual_full_path.c_str(), "r");
+        if (tiff_ != nullptr) 
+        {
+          read_result.state = ReadResult::kValue;
+          char* infobuf;
+          TIFFGetField(tiff_, TIFFTAG_IMAGEDESCRIPTION , &infobuf);
+          image_metadata.append(infobuf);
+          std::cout<<"length is"<<image_metadata.length();
+        }
+        TIFFClose(tiff_);      
+        absl::Cord tmp =  absl::Cord(image_metadata);
+        read_result.value = std::move(tmp);
       }
-      if (n == 0) {
-        return absl::UnavailableError(
-            StrCat("Length changed while reading: ", full_path));
+
+      else // parse tile indices
+      { 
+        std::smatch match_result;
+        std::regex tile_indices_regex("_(\\d+)_(\\d+)");
+        if (regex_match(tag_value, match_result, tile_indices_regex)){
+          uint32_t x_pos = std::stoi(match_result[1].str());
+          uint32_t y_pos = std::stoi(match_result[2].str());
+          std::cout << "using libtiff" << std::endl;
+          TIFF *tiff_ = TIFFOpen(actual_full_path.c_str(), "r");
+          if (tiff_ != nullptr) 
+          {
+            read_result.state = ReadResult::kValue;
+            tdata_t tiffTile = nullptr;
+            auto t_szb = TIFFTileSize(tiff_);
+            //tiffTile = _TIFFmalloc(t_szb);
+            //auto errcode = TIFFReadTile(tiff_, tiffTile, x_pos, y_pos, 0, 0);
+            internal::FlatCordBuilder buffer2(t_szb);
+            //memcpy(buffer2.data(), tiffTile, t_szb);
+            auto errcode = TIFFReadTile(tiff_, buffer2.data(), x_pos, y_pos, 0, 0);
+            //_TIFFfree(tiffTile);
+            TIFFClose(tiff_);      
+            read_result.value = std::move(buffer2).Build();
+          }
+
+        }
       }
-      return StatusFromErrno("Error reading file: ", full_path);
     }
-    read_result.value = std::move(buffer).Build();
+
     return read_result;
   }
 };

@@ -60,12 +60,17 @@ tensorstore_cc_library(
         "@com_google_absl//absl/strings",
     ],
     alwayslink = 1,
+    linkopts = ["/usr/lib64/libtiffxx.so.5",
+            "/usr/lib64/libtiff.so"
+            ]
 )
 
 
 tensorstore_cc_library(
     name = "driver",
     srcs = ["driver.cc"],
+    hdrs = ["pugixml.hpp",
+            "pugiconfig.hpp"],
     deps = [
         ":metadata",
         "//tensorstore",
@@ -101,6 +106,29 @@ tensorstore_cc_test(
         "//tensorstore/util:span",
         "//tensorstore/util:status",
         "//tensorstore/util:status_testutil",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+tensorstore_cc_test(
+    name = "driver_test",
+    size = "small",
+    srcs = ["driver_test.cc"],
+    deps = [
+        ":driver",
+        "//tensorstore:open",
+        "//tensorstore/driver:driver_testutil",
+        "//tensorstore/index_space:dim_expression",
+        "//tensorstore/index_space:index_transform",
+        "//tensorstore/internal:global_initializer",
+        "//tensorstore/internal:parse_json_matches",
+        "//tensorstore/internal/cache",
+        "//tensorstore/kvstore",
+        "//tensorstore/kvstore:test_util",
+        "//tensorstore/kvstore/memory",
+        "//tensorstore/util:status",
+        "//tensorstore/util:status_testutil",
+        "//tensorstore/util:str_cat",
         "@com_google_googletest//:gtest_main",
     ],
 )

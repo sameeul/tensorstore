@@ -50,7 +50,6 @@ class OmeTiffMetadataConstraints {
   /// Specifies the chunk size (corresponding to the `"blockSize"` attribute)
   /// and the in-memory layout of a full chunk (always C order).
   std::optional<std::vector<Index>> chunk_shape;
-
   std::optional<DataType> dtype;
 
 

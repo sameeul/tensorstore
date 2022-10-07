@@ -4,7 +4,9 @@
 // ToDo - Clean up headers
 #include <iostream>
 #include <optional>
-
+#include <tiffio.h>
+#include <tiffio.hxx>
+#include <sstream>
 #include "absl/algorithm/container.h"
 #include "absl/base/internal/endian.h"
 #include "absl/status/status.h"
@@ -71,36 +73,36 @@ constexpr auto MetadataJsonBinder = [](auto maybe_optional) {
                                           },
                                           jb::DataTypeJsonBinder))))
 
-                    )(is_loading, options, obj, j);
+            )(is_loading, options, obj, j);
   };
 };
 
-} //namespace
+}  // namespace
 
 std::string OmeTiffMetadata::GetCompatibilityKey() const {
-    // need to figure out what goes here
-    ::nlohmann::json::object_t obj;
-    span<const Index> chunk_shape = chunk_layout.shape();
-    obj.emplace("blockSize", ::nlohmann::json::array_t(chunk_shape.begin(),
-                                                        chunk_shape.end()));
-    obj.emplace("dataType", dtype.name());
-    return ::nlohmann::json(obj).dump();
+  // need to figure out what goes here
+  ::nlohmann::json::object_t obj;
+  span<const Index> chunk_shape = chunk_layout.shape();
+  obj.emplace("blockSize", ::nlohmann::json::array_t(chunk_shape.begin(),
+                                                     chunk_shape.end()));
+  obj.emplace("dataType", dtype.name());
+  return ::nlohmann::json(obj).dump();
 }
 
-TENSORSTORE_DEFINE_JSON_DEFAULT_BINDER(OmeTiffMetadata, 
-                              jb::Validate([](const auto& options, auto* obj) 
-                              { return ValidateMetadata(*obj); },
-                             MetadataJsonBinder(internal::identity{})))
+TENSORSTORE_DEFINE_JSON_DEFAULT_BINDER(
+    OmeTiffMetadata,
+    jb::Validate([](const auto& options,
+                    auto* obj) { return ValidateMetadata(*obj); },
+                 MetadataJsonBinder(internal::identity{})))
 
 TENSORSTORE_DEFINE_JSON_DEFAULT_BINDER(OmeTiffMetadataConstraints,
                                        MetadataJsonBinder([](auto binder) {
                                          return jb::Optional(binder);
                                        }))
 
-
-
 Result<std::shared_ptr<const OmeTiffMetadata>> GetNewMetadata(
-    const OmeTiffMetadataConstraints& metadata_constraints, const Schema& schema) {
+    const OmeTiffMetadataConstraints& metadata_constraints,
+    const Schema& schema) {
   auto metadata = std::make_shared<OmeTiffMetadata>();
 
   // Set domain
@@ -134,14 +136,12 @@ Result<std::shared_ptr<const OmeTiffMetadata>> GetNewMetadata(
   TENSORSTORE_RETURN_IF_ERROR(ValidateMetadata(*metadata));
   TENSORSTORE_RETURN_IF_ERROR(ValidateMetadataSchema(*metadata, schema));
   return metadata;
-
 }
 
 absl::Status SetChunkLayoutFromMetadata(
     DimensionIndex rank, std::optional<span<const Index>> chunk_shape,
     ChunkLayout& chunk_layout) {
-
-// ToDo - Need to understand and reimplement 
+  // ToDo - Need to understand and reimplement
   TENSORSTORE_RETURN_IF_ERROR(chunk_layout.Set(RankConstraint{rank}));
   rank = chunk_layout.rank();
   if (rank == dynamic_rank) return absl::OkStatus();
@@ -167,23 +167,53 @@ absl::Status SetChunkLayoutFromMetadata(
 Result<SharedArrayView<const void>> DecodeChunk(const OmeTiffMetadata& metadata,
                                                 absl::Cord buffer) {
 
+
+    auto decoded_array =
+        internal::TryViewCordAsArray(buffer, 0, metadata.dtype,
+                                     endian::little, metadata.chunk_layout);
+    if (decoded_array.valid()){
+      std::cout<<"valid array"<<std::endl;
+      return decoded_array;
+    }
+    else {
     SharedArrayView<void> full_decoded_array(
       internal::AllocateAndConstructSharedElements(
           metadata.chunk_layout.num_elements(), value_init, metadata.dtype),
       metadata.chunk_layout);
-  return full_decoded_array;
+      return full_decoded_array;   
+    }
+
 }
 
 Result<absl::Cord> EncodeChunk(span<const Index> chunk_indices,
                                const OmeTiffMetadata& metadata,
                                ArrayView<const void> array) {
-
-                                return absl::Cord();
+  return absl::Cord();
 }
 
-Result<IndexDomain<>> GetEffectiveDomain(
-    DimensionIndex rank, std::optional<span<const Index>> shape,
-    const Schema& schema) {
+absl::Status ValidateMetadata(const OmeTiffMetadata& metadata,
+                              const OmeTiffMetadataConstraints& constraints) {
+  if (constraints.shape && !absl::c_equal(metadata.shape, *constraints.shape)) {
+    return MetadataMismatchError("dimensions", *constraints.shape,
+                                 metadata.shape);
+  }
+
+  if (constraints.chunk_shape &&
+      !absl::c_equal(metadata.chunk_layout.shape(), *constraints.chunk_shape)) {
+    return MetadataMismatchError("blockSize", *constraints.chunk_shape,
+                                 metadata.chunk_shape);
+  }
+  if (constraints.dtype && *constraints.dtype != metadata.dtype) {
+    return MetadataMismatchError("dataType", constraints.dtype->name(),
+                                 metadata.dtype.name());
+  }
+
+  return absl::OkStatus();
+}
+
+Result<IndexDomain<>> GetEffectiveDomain(DimensionIndex rank,
+                                         std::optional<span<const Index>> shape,
+                                         const Schema& schema) {
   auto domain = schema.domain();
   if (!shape && !domain.valid()) {
     if (schema.rank() == 0) return {std::in_place, 0};
@@ -211,7 +241,8 @@ Result<IndexDomain<>> GetEffectiveDomain(
 }
 
 Result<IndexDomain<>> GetEffectiveDomain(
-    const OmeTiffMetadataConstraints& metadata_constraints, const Schema& schema) {
+    const OmeTiffMetadataConstraints& metadata_constraints,
+    const Schema& schema) {
   return GetEffectiveDomain(metadata_constraints.rank,
                             metadata_constraints.shape, schema);
 }
@@ -225,7 +256,8 @@ Result<ChunkLayout> GetEffectiveChunkLayout(
 }
 
 Result<ChunkLayout> GetEffectiveChunkLayout(
-    const OmeTiffMetadataConstraints& metadata_constraints, const Schema& schema) {
+    const OmeTiffMetadataConstraints& metadata_constraints,
+    const Schema& schema) {
   assert(RankConstraint::EqualOrUnspecified(metadata_constraints.rank,
                                             schema.rank()));
   return GetEffectiveChunkLayout(
@@ -242,8 +274,8 @@ absl::Status ValidateMetadataSchema(const OmeTiffMetadata& metadata,
   }
 
   if (schema.domain().valid()) {
-    TENSORSTORE_RETURN_IF_ERROR(GetEffectiveDomain(
-        metadata.rank, metadata.shape, schema));
+    TENSORSTORE_RETURN_IF_ERROR(
+        GetEffectiveDomain(metadata.rank, metadata.shape, schema));
   }
 
   if (auto dtype = schema.dtype();
@@ -263,12 +295,12 @@ absl::Status ValidateMetadataSchema(const OmeTiffMetadata& metadata,
   }
 
   if (schema.fill_value().valid()) {
-    return absl::InvalidArgumentError("fill_value not supported by OmeTiff format");
+    return absl::InvalidArgumentError(
+        "fill_value not supported by OmeTiff format");
   }
 
   return absl::OkStatus();
 }
-
 
 absl::Status ValidateDataType(DataType dtype) {
   if (!absl::c_linear_search(kSupportedDataTypes, dtype.id())) {
