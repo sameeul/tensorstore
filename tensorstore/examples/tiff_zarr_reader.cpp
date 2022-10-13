@@ -52,7 +52,11 @@ void PrintCSVArray(Array&& data) {
     std::cout << data << std::endl;
     return;
   }
-
+  size_t sum = 0;
+  for (int x = 0; x < data.shape()[0]; x++)
+    for (int y = 0; y < data.shape()[1]; y++) {
+      sum += data(x,y);
+    }
   // Iterate over the shape of the data array, which gives us one
   // reference for every element.
   //
@@ -75,20 +79,20 @@ void PrintCSVArray(Array&& data) {
   // printing, rank-0 arrays have been overloaded to print correctly, and so we
   // can do this:
   std::string s;
-  size_t sum = 0;
+
   tensorstore::IterateOverIndexRange(  //
       data.shape(), [&](tensorstore::span<const Index> idx) {
         
         element_rep->append_to_string(&s, data[idx].pointer());
         if (*idx.rbegin() == max) {
-          //std::cout << s << std::endl;
-          sum += std::stoi(s);
+          std::cout << s << std::endl;
+
           s.clear();
         } else {
           s.append("\t");
         }
       });
-  //std::cout << s << std::endl;
+  std::cout << s << std::endl;
   std::cout << "sum is " << sum << std::endl;
 }
 
@@ -98,7 +102,7 @@ void read_ometiff_data()
   tensorstore::Context context = Context::Default();
   TENSORSTORE_CHECK_OK_AND_ASSIGN(auto store, tensorstore::Open({{"driver", "ometiff"},
                             {"kvstore", {{"driver", "file"},
-                                         {"path", "/home/ec2-user/data/r001_c001_z000.ome.tif"}}
+                                         {"path", "/mnt/hdd8/axle/data/bfio_test_images/r001_c001_z000.ome.tif"}}
                             }},
                             context,
                             tensorstore::OpenMode::open,
@@ -108,13 +112,13 @@ void read_ometiff_data()
 
 
  
-  auto array = tensorstore::AllocateArray<tensorstore::uint16_t>({1050, 1050});
+  auto array = tensorstore::AllocateArray<tensorstore::uint16_t>({10, 10});
   auto array2 = tensorstore::AllocateArray<tensorstore::uint16_t>({17, 17});
 
   tensorstore::Read(store | 
                 tensorstore::AllDims().TranslateTo(0) |
-                tensorstore::Dims(0).ClosedInterval(0,1049) |
-                tensorstore::Dims(1).ClosedInterval(0,1049) ,
+                tensorstore::Dims(0).ClosedInterval(0,9) |
+                tensorstore::Dims(1).ClosedInterval(0,9) ,
                 array).value();
 
   PrintCSVArray(array);

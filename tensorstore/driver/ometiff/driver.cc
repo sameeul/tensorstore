@@ -93,21 +93,23 @@ class OmeTiffDriverSpec
 Result<std::shared_ptr<const OmeTiffMetadata>> ParseEncodedMetadata(
     std::string_view encoded_value) {
 
-  // nlohmann::json raw_data = nlohmann::json::parse(encoded_value, nullptr,
-  //                                                 /*allow_exceptions=*/false);
-  // if (raw_data.is_discarded()) {
-  //   return absl::FailedPreconditionError("Invalid JSON");
-  // }
+
+  std::string test = "{\"dimensions\": [42906, 29286],\"blockSize\": [1024, 1024],\"dataType\": \"uint16\"}";
+  nlohmann::json raw_data = nlohmann::json::parse(encoded_value, nullptr,
+                                                  /*allow_exceptions=*/false);
+  if (raw_data.is_discarded()) {
+    return absl::FailedPreconditionError("Invalid JSON");
+  }
 
   // for now, hardcoded metadata, 
   // in future this will come from "IMAGE_DESCRIPTION" tag
   pugi::xml_document doc;
-  pugi::xml_parse_result result = doc.load_string(encoded_value);
-  nlohmann::json raw_data {
-      {"dimensions", {42906, 29286}},   
-      {"blockSize", {1024, 1024}},           
-      {"dataType", "uint16"},
-  }; 
+ // pugi::xml_parse_result result = doc.load_string(encoded_value);
+  // nlohmann::json raw_data {
+  //     {"dimensions", {42906, 29286}},   
+  //     {"blockSize", {1024, 1024}},           
+  //     {"dataType", "uint16"},
+  // }; 
   TENSORSTORE_ASSIGN_OR_RETURN(auto metadata,
                                OmeTiffMetadata::FromJson(std::move(raw_data)));
   return std::make_shared<OmeTiffMetadata>(std::move(metadata));

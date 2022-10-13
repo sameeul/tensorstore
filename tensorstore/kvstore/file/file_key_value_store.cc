@@ -93,6 +93,7 @@
 #include <cstddef>
 #include <memory>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -395,17 +396,82 @@ struct ReadTask {
     if (pos != std::string::npos){
 
       if (tag_value == img_tag){
+        std::ostringstream oss;
         TIFF *tiff_ = TIFFOpen(actual_full_path.c_str(), "r");
         if (tiff_ != nullptr) 
         {
           read_result.state = ReadResult::kValue;
           char* infobuf;
-          TIFFGetField(tiff_, TIFFTAG_IMAGEDESCRIPTION , &infobuf);
-          image_metadata.append(infobuf);
-          std::cout<<"length is"<<image_metadata.length();
+          uint32_t 
+            image_width = 0, 
+            image_height = 0, 
+            tile_width = 0,
+            tile_height = 0;
+          short
+            sample_format = 0,          
+            bits_per_sample = 0;
+          
+          std::string dtype;
+
+          TIFFGetField(tiff_, TIFFTAG_IMAGEWIDTH, &image_width);
+          TIFFGetField(tiff_, TIFFTAG_IMAGELENGTH, &image_height);
+          TIFFGetField(tiff_, TIFFTAG_TILEWIDTH, &tile_width);
+          TIFFGetField(tiff_, TIFFTAG_TILELENGTH, &tile_height);
+          TIFFGetField(tiff_, TIFFTAG_BITSPERSAMPLE, &bits_per_sample);
+          TIFFGetField(tiff_, TIFFTAG_SAMPLEFORMAT, &sample_format);
+          switch (sample_format) {
+            case 1 :
+              switch (sample_format) {
+                case 8:dtype = "uint8";
+                  break;
+                case 16:dtype = "uint16";
+                  break;
+                case 32:dtype = "uint32";
+                  break;
+                case 64:dtype = "uint64";
+                  break;
+                default: dtype = "uint16";
+              }
+              break;
+            case 2:
+              switch (bits_per_sample) {
+                case 8:dtype = "int8";
+                  break;
+                case 16:dtype = "int16";
+                  break;
+                case 32:dtype = "int32";
+                  break;
+                case 64:dtype = "int64";
+                  break;
+                default: dtype = "uint16";
+              }
+              break;
+            case 3:
+              switch (bits_per_sample) {
+                case 8:
+                case 16:
+                case 32:
+                  dtype = "float";
+                  break;
+                case 64:
+                  dtype = "double";
+                  break;
+                default: dtype = "uint16";
+              }
+              break;
+            default: dtype = "uint16";
+          }
+
+          
+          oss << "{"
+              << "\"dimensions\": [" << image_width << "," << image_height << "],"
+              << "\"blockSize\": [" << tile_width << "," << tile_height << "],"
+              << "\"dataType\": \"" << dtype << "\""
+              << "}";
+
         }
         TIFFClose(tiff_);      
-        absl::Cord tmp =  absl::Cord(image_metadata);
+        absl::Cord tmp =  absl::Cord(oss.str());
         read_result.value = std::move(tmp);
       }
 

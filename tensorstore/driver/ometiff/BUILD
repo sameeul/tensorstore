@@ -60,15 +60,16 @@ tensorstore_cc_library(
         "@com_google_absl//absl/strings",
     ],
     alwayslink = 1,
-    linkopts = ["/usr/lib64/libtiffxx.so.5",
-            "/usr/lib64/libtiff.so"
+    linkopts = ["/usr/lib/x86_64-linux-gnu/libtiffxx.so.5",
+            "/usr/lib/x86_64-linux-gnu/libtiff.so"
             ]
 )
 
 
 tensorstore_cc_library(
     name = "driver",
-    srcs = ["driver.cc"],
+    srcs = ["driver.cc",
+            "pugixml.cpp"],
     hdrs = ["pugixml.hpp",
             "pugiconfig.hpp"],
     deps = [
